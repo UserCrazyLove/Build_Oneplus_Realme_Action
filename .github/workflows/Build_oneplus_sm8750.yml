@@ -79,7 +79,7 @@ on:
 jobs:
   build:
     name: Build_${{ github.event.inputs.device_name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       DEVICES_NAME:           ${{ github.event.inputs.device_name }}
@@ -641,6 +641,26 @@ jobs:
           sudo sed -i "s/-4k/$ESCAPED_SUFFIX/g" ./common/arch/arm64/configs/gki_defconfig
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
 
+      - name: 🔧 Fix host libbpf build error (修复 host libbpf 编译报错)
+        run: |
+          cd kernel_workspace/common
+          LIBBPF_C="tools/lib/bpf/libbpf.c"
+          # 新版内核源码中 resolve_full_path() 存在 const 限定符丢弃问题（clang 默认告警 + -Werror 直接失败）
+          if [ -f "$LIBBPF_C" ] && grep -q "next_path = strchr(s, ':')" "$LIBBPF_C"; then
+            sed -i "s/char \*next_path;/const char *next_path;/" "$LIBBPF_C"
+            grep -n 'const char \*next_path;' "$LIBBPF_C" || true
+            echo "✅ libbpf const 限定符问题已修复"
+          else
+            echo "ℹ️ 未检测到需要修复的 libbpf 代码，跳过"
+          fi
+
+          # host 端 libbpf 仅用于 resolve_btfids/bpftool 等辅助工具，不应因告警中断整条构建
+          if [ -f tools/lib/bpf/Makefile ]; then
+            sed -i 's/^override CFLAGS += -Werror -Wall$/override CFLAGS += -Wall/' tools/lib/bpf/Makefile
+            grep -n '^override CFLAGS += -Wall$' tools/lib/bpf/Makefile || true
+            echo "✅ 已放宽 host libbpf 的 -Werror"
+          fi
+
       - name: 📥 Start build timer (构建计时开始)
         run: 
           echo "BUILD_START=$(date +%s)" >> $GITHUB_ENV
@@ -788,7 +808,7 @@ jobs:
     name: Upload Re-Kernel Module
     if: ${{ github.event.inputs.enable_ReKernel == 'true' }}
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: 🔎 Find Re-Kernel module zip (查找Re-Kernel最新模块并下载)
         id: download-rekernel
@@ -881,7 +901,7 @@ jobs:
     name: 📤 Create Release (创建发布)
     needs: [build, upload_rekernel]
     if: ${{ github.event.inputs.enable_release == 'true' && always() && needs.build.result != 'failure' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       actions: read
